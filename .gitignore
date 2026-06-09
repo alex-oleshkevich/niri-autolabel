@@ -1,0 +1,14 @@
+# build artifacts
+/autolabel
+
+# Arch packaging output
+*.pkg.tar.*
+*.src.tar.*
+/pkg/
+/src/
+
+# Beads task tracker (local dev only)
+.beads/
+.dolt/
+*.db
+.beads-credential-key

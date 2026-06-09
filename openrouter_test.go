@@ -1,0 +1,68 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestOpenRouterGenerate(t *testing.T) {
+	var gotReq chatRequest
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotReq)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"coding\n"}}]}`)
+	}))
+	defer srv.Close()
+
+	lab := NewOpenRouterLabeler("secret-key", "test/model", "", NopLogger())
+	lab.client = srv.Client()
+	lab.url = srv.URL
+
+	out, err := lab.Generate(context.Background(), []Window{
+		{AppID: "ghostty", Title: "nvim main.go"},
+	}, []string{"gmail", "slack"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if strings.TrimSpace(out) != "coding" {
+		t.Fatalf("content = %q, want coding", out)
+	}
+	if gotAuth != "Bearer secret-key" {
+		t.Fatalf("auth header = %q", gotAuth)
+	}
+	if gotReq.Model != "test/model" {
+		t.Fatalf("model = %q, want test/model", gotReq.Model)
+	}
+	if len(gotReq.Messages) != 2 || gotReq.Messages[0].Role != "system" {
+		t.Fatalf("unexpected messages: %+v", gotReq.Messages)
+	}
+	if !strings.Contains(gotReq.Messages[1].Content, "app=ghostty") {
+		t.Fatalf("user message missing window list: %q", gotReq.Messages[1].Content)
+	}
+	if !strings.Contains(gotReq.Messages[1].Content, "gmail, slack") {
+		t.Fatalf("user message missing avoid list: %q", gotReq.Messages[1].Content)
+	}
+}
+
+func TestOpenRouterErrorBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"message":"no endpoints found"}}`)
+	}))
+	defer srv.Close()
+
+	lab := NewOpenRouterLabeler("k", "bad/model", "", NopLogger())
+	lab.client = srv.Client()
+	lab.url = srv.URL
+
+	if _, err := lab.Generate(context.Background(), nil, nil); err == nil {
+		t.Fatal("expected error from error body")
+	}
+}
