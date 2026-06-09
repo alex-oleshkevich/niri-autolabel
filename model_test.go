@@ -43,6 +43,47 @@ func TestModelReducer(t *testing.T) {
 	}
 }
 
+func TestApplyReportsRelevantChangeOnly(t *testing.T) {
+	m := NewModel()
+	m.Apply(workspacesEvent(Workspace{ID: 1, Idx: 1}))
+
+	open := func(title string) Event {
+		return Event{WindowOpenedOrChanged: &struct {
+			Window Window `json:"window"`
+		}{Window: Window{ID: 9, AppID: "ghostty", Title: title, WorkspaceID: ptr(1)}}}
+	}
+
+	if !m.Apply(open("nvim main.go")) {
+		t.Fatal("first window open should be a change")
+	}
+	// Same relevant fields (e.g. a focus/position update) -> no change.
+	if m.Apply(open("nvim main.go")) {
+		t.Fatal("identical window update should report no change")
+	}
+	// Spinner-glyph-only title churn -> no change (normalizeTitle strips it).
+	if m.Apply(open("⠂ nvim main.go")) {
+		t.Fatal("spinner-glyph-only title change should report no change")
+	}
+	if m.Apply(open("✳ nvim main.go")) {
+		t.Fatal("spinner-glyph-only title change should report no change")
+	}
+	// A real title change -> change.
+	if !m.Apply(open("nvim other.go")) {
+		t.Fatal("real title change should report a change")
+	}
+	// Closing a tracked window -> change; closing an unknown one -> no change.
+	if !m.Apply(Event{WindowClosed: &struct {
+		ID int `json:"id"`
+	}{ID: 9}}) {
+		t.Fatal("closing a tracked window should report a change")
+	}
+	if m.Apply(Event{WindowClosed: &struct {
+		ID int `json:"id"`
+	}{ID: 9}}) {
+		t.Fatal("closing an unknown window should report no change")
+	}
+}
+
 func TestSignatureStability(t *testing.T) {
 	build := func(order []Window) string {
 		m := NewModel()

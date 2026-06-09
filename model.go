@@ -23,24 +23,78 @@ func NewModel() *Model {
 	}
 }
 
-func (m *Model) Apply(e Event) {
+// Apply updates the model and reports whether anything that can affect a label
+// changed. niri emits WindowOpenedOrChanged for focus/size/position updates too,
+// so most events leave the label-relevant projection (app id, normalized title,
+// workspace membership, workspace names) untouched and return false.
+func (m *Model) Apply(e Event) (changed bool) {
 	switch {
 	case e.WorkspacesChanged != nil:
-		m.workspaces = map[int]Workspace{}
+		next := make(map[int]Workspace, len(e.WorkspacesChanged.Workspaces))
 		for _, ws := range e.WorkspacesChanged.Workspaces {
-			m.workspaces[ws.ID] = ws
+			next[ws.ID] = ws
 		}
+		changed = !sameWorkspaceProjection(m.workspaces, next)
+		m.workspaces = next
 	case e.WindowsChanged != nil:
-		m.windows = map[int]Window{}
+		next := make(map[int]Window, len(e.WindowsChanged.Windows))
 		for _, w := range e.WindowsChanged.Windows {
-			m.windows[w.ID] = w
+			next[w.ID] = w
 		}
+		changed = !sameWindowProjection(m.windows, next)
+		m.windows = next
 	case e.WindowOpenedOrChanged != nil:
 		w := e.WindowOpenedOrChanged.Window
+		old, existed := m.windows[w.ID]
 		m.windows[w.ID] = w
+		changed = !existed || windowKey(old) != windowKey(w)
 	case e.WindowClosed != nil:
+		_, existed := m.windows[e.WindowClosed.ID]
 		delete(m.windows, e.WindowClosed.ID)
+		changed = existed
 	}
+	return changed
+}
+
+// windowKey projects a window to just the fields that influence a label.
+type winKey struct {
+	app   string
+	title string
+	ws    int
+}
+
+func windowKey(w Window) winKey {
+	ws := 0
+	if w.WorkspaceID != nil {
+		ws = *w.WorkspaceID
+	}
+	return winKey{app: w.AppID, title: normalizeTitle(w.Title), ws: ws}
+}
+
+func sameWindowProjection(a, b map[int]Window) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, wa := range a {
+		wb, ok := b[id]
+		if !ok || windowKey(wa) != windowKey(wb) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameWorkspaceProjection(a, b map[int]Workspace) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, wa := range a {
+		wb, ok := b[id]
+		if !ok || nameOf(wa) != nameOf(wb) {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Model) Workspace(id int) (Workspace, bool) {

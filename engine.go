@@ -77,9 +77,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			e.clearOwnedLabels()
 			return nil
 		case ev := <-events:
-			e.logger.Debug("event", "kind", ev.kind())
-			e.model.Apply(ev)
-			e.evaluateAll()
+			if e.model.Apply(ev) {
+				e.logger.Debug("event", "kind", ev.kind())
+				e.evaluateAll()
+			}
 		case wsID := <-e.fireCh:
 			e.onFire(ctx, wsID)
 		case res := <-e.resultCh:
