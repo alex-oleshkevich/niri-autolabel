@@ -7,9 +7,21 @@ on:
 
 jobs:
   aur-publish:
+    name: Publish AUR package
     runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      AUR_PKG: autolabel
+      AUR_REMOTE: ssh://aur@aur.archlinux.org/autolabel.git
+      AUR_KEY_SET: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
     steps:
+      - name: Install publish dependencies
+        run: pacman -Syu --noconfirm --needed git openssh pacman-contrib
+
       - uses: actions/checkout@v4
+
+      - name: Trust checkout directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Derive version from tag
         id: ver
@@ -22,25 +34,48 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Set pkgver in PKGBUILD
+      - name: Configure AUR SSH
+        if: env.AUR_KEY_SET == 'true'
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$HOME/.ssh/aur"
+          chmod 600 "$HOME/.ssh/aur"
+          ssh-keyscan -H aur.archlinux.org > "$HOME/.ssh/known_hosts"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish to the AUR
+        if: env.AUR_KEY_SET == 'true'
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts"
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
 
-      - name: Publish to the AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
-        with:
-          pkgname: autolabel
-          pkgbuild: ./PKGBUILD
-          assets: |
-            autolabel.service
-            LICENSE
-            README.md
-          commit_username: ${{ secrets.AUR_USERNAME }}
-          commit_email: ${{ secrets.AUR_EMAIL }}
-          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: "Update to ${{ steps.ver.outputs.version }}"
-          updpkgsums: true
-          test: true
+          # makepkg/updpkgsums refuse to run as root: do checksum + .SRCINFO as a builder user.
+          # updpkgsums downloads the source tarball from GitHub, so only the PKGBUILD is needed here.
+          builddir="$(mktemp -d)"
+          cp PKGBUILD "$builddir/"
+          useradd -m builder
+          chown -R builder:builder "$builddir"
+          runuser -u builder -- bash -euc "cd '$builddir' && updpkgsums && makepkg --printsrcinfo > .SRCINFO"
+
+          tmpdir="$(mktemp -d)"
+          git clone "$AUR_REMOTE" "$tmpdir"
+          git config --global --add safe.directory "$tmpdir"
+          cp "$builddir/PKGBUILD" "$builddir/.SRCINFO" "$tmpdir/"
+          cd "$tmpdir"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "AUR package $AUR_PKG already up to date"
+          else
+            git commit -m "Update to ${VERSION}"
+            git push origin master
+          fi
+
+      - name: Skip AUR publish
+        if: env.AUR_KEY_SET != 'true'
+        run: echo "AUR_SSH_PRIVATE_KEY is not configured; skipping AUR publish."
