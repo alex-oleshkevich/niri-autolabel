@@ -1,6 +1,6 @@
 set shell := ["bash", "-uc"]
 
-aur_repo := "ssh://aur@aur.archlinux.org/autolabel.git"
+aur_repo := "ssh://aur@aur.archlinux.org/niri-autolabel.git"
 
 # list recipes
 default:

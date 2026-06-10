@@ -25,7 +25,7 @@ Empty workspaces have their label removed.
 ### From the AUR
 
 ```sh
-paru -S autolabel   # or yay -S autolabel
+paru -S niri-autolabel   # or yay -S niri-autolabel
 ```
 
 ### From source
