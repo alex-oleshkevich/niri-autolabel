@@ -9,8 +9,10 @@ Requisite=graphical-session.target
 [Service]
 Type=simple
 # OPENROUTER_API_KEY is required. Provide it via a drop-in
-# (`systemctl --user edit niri-autolabel`) or this optional env file:
+# (`systemctl --user edit niri-autolabel`), an imported user-manager
+# environment, or one of these optional env files:
 EnvironmentFile=-%h/.config/niri-autolabel/env
+EnvironmentFile=-%h/.config/autolabel/env
 ExecStart=/usr/bin/niri-autolabel
 Restart=on-failure
 RestartSec=2

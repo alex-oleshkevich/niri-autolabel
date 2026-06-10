@@ -67,6 +67,17 @@ printf 'OPENROUTER_API_KEY=sk-or-...\n' > ~/.config/niri-autolabel/env
 systemctl --user enable --now niri-autolabel
 ```
 
+If `OPENROUTER_API_KEY` is already set in your shell, import it into the systemd
+user manager before starting the service:
+
+```sh
+systemctl --user import-environment OPENROUTER_API_KEY
+systemctl --user restart niri-autolabel
+```
+
+For upgrades from early packages, the service also reads
+`~/.config/autolabel/env`.
+
 The service starts with `graphical-session.target`. For niri-autolabel to reach niri,
 the session's `NIRI_SOCKET` (and `WAYLAND_DISPLAY`) must be visible to the user
 manager. With uwsm-managed niri this happens automatically; otherwise import it

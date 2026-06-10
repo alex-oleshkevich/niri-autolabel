@@ -18,7 +18,10 @@ func TestPackagingUsesNiriAutolabelRuntimeNames(t *testing.T) {
 	requireContains(t, srcinfo, "pkgbase = niri-autolabel")
 	requireContains(t, srcinfo, "pkgname = niri-autolabel")
 	requireContains(t, readme, "systemctl --user enable --now niri-autolabel")
+	requireContains(t, readme, "systemctl --user import-environment OPENROUTER_API_KEY")
 	requireContains(t, service, "ExecStart=/usr/bin/niri-autolabel")
+	requireContains(t, service, "EnvironmentFile=-%h/.config/niri-autolabel/env")
+	requireContains(t, service, "EnvironmentFile=-%h/.config/autolabel/env")
 }
 
 func mustReadText(t *testing.T, path string) string {
