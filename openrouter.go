@@ -14,8 +14,13 @@ import (
 )
 
 const (
-	openRouterURL = "https://openrouter.ai/api/v1/chat/completions"
-	defaultModel  = "google/gemini-2.5-flash-lite"
+	defaultBaseURL = "https://openrouter.ai/api/v1"
+	defaultModel   = "google/gemini-2.5-flash-lite"
+
+	// Placeholders a custom --prompt template may use.
+	windowsPlaceholder = "{{windows}}"
+	avoidPlaceholder   = "{{avoid}}"
+
 	labelSystemPrompt = `You name a niri workspace with a SINGLE word. A workspace groups related windows together. Your job: find what is COMMON to all (or most) of the windows and name that shared subject.
 
 Method:
@@ -74,27 +79,29 @@ type Labeler interface {
 }
 
 type OpenRouterLabeler struct {
-	apiKey string
-	model  string
-	system string
-	url    string
-	client *http.Client
-	logger Logger
+	apiKey   string
+	model    string
+	template string // custom --prompt; when set, replaces the built-in system+user prompt
+	url      string
+	client   *http.Client
+	logger   Logger
 }
 
-// NewOpenRouterLabeler builds a labeler. A non-empty system overrides the
-// built-in labelSystemPrompt (used by the --prompt flag).
-func NewOpenRouterLabeler(apiKey, model, system string, logger Logger) OpenRouterLabeler {
-	if system == "" {
-		system = labelSystemPrompt
+// NewOpenRouterLabeler builds a labeler targeting an OpenAI-compatible chat API
+// at baseURL (e.g. https://openrouter.ai/api/v1, or a local Ollama). A non-empty
+// template replaces the built-in prompt; it may contain {{windows}} and {{avoid}}
+// placeholders (the window list is appended if {{windows}} is absent).
+func NewOpenRouterLabeler(apiKey, model, baseURL, template string, logger Logger) OpenRouterLabeler {
+	if baseURL == "" {
+		baseURL = defaultBaseURL
 	}
 	return OpenRouterLabeler{
-		apiKey: apiKey,
-		model:  model,
-		system: system,
-		url:    openRouterURL,
-		client: &http.Client{Timeout: 30 * time.Second},
-		logger: logger,
+		apiKey:   apiKey,
+		model:    model,
+		template: template,
+		url:      strings.TrimRight(baseURL, "/") + "/chat/completions",
+		client:   &http.Client{Timeout: 30 * time.Second},
+		logger:   logger,
 	}
 }
 
@@ -120,21 +127,22 @@ type chatResponse struct {
 }
 
 func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid []string) (string, error) {
-	userMsg := buildUserMessage(windows, avoid)
+	messages := l.messages(windows, avoid)
 	if l.logger.Enabled(ctx, slog.LevelDebug) {
-		fmt.Fprintf(os.Stderr,
-			"\n======== autolabel prompt -> %s ========\n--- system ---\n%s\n\n--- user ---\n%s\n=========================================\n\n",
-			l.model, l.system, userMsg)
+		var b strings.Builder
+		fmt.Fprintf(&b, "\n======== autolabel prompt -> %s ========\n", l.model)
+		for _, m := range messages {
+			fmt.Fprintf(&b, "--- %s ---\n%s\n\n", m.Role, m.Content)
+		}
+		b.WriteString("=========================================\n")
+		fmt.Fprint(os.Stderr, b.String())
 	}
 
 	payload, err := json.Marshal(chatRequest{
 		Model:       l.model,
 		Temperature: 0,
 		MaxTokens:   16,
-		Messages: []chatMessage{
-			{Role: "system", Content: l.system},
-			{Role: "user", Content: userMsg},
-		},
+		Messages:    messages,
 	})
 	if err != nil {
 		return "", err
@@ -178,20 +186,53 @@ func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid
 	return content, nil
 }
 
+// messages builds the chat messages. With a custom template it is sent as a
+// single user message (placeholders substituted); otherwise the built-in
+// system + user prompt is used.
+func (l OpenRouterLabeler) messages(windows []Window, avoid []string) []chatMessage {
+	if l.template != "" {
+		return []chatMessage{{Role: "user", Content: renderTemplate(l.template, windows, avoid)}}
+	}
+	return []chatMessage{
+		{Role: "system", Content: labelSystemPrompt},
+		{Role: "user", Content: buildUserMessage(windows, avoid)},
+	}
+}
+
+func renderTemplate(tpl string, windows []Window, avoid []string) string {
+	out := tpl
+	if strings.Contains(out, windowsPlaceholder) {
+		out = strings.ReplaceAll(out, windowsPlaceholder, windowList(windows))
+	} else {
+		out = strings.TrimRight(out, "\n") + "\n\n" + windowList(windows)
+	}
+	out = strings.ReplaceAll(out, avoidPlaceholder, strings.Join(avoid, ", "))
+	return out
+}
+
 func buildUserMessage(windows []Window, avoid []string) string {
 	var b strings.Builder
 	b.WriteString("Windows open in this workspace:\n")
-	for _, w := range windows {
+	b.WriteString(windowList(windows))
+	if len(avoid) > 0 {
+		fmt.Fprintf(&b, "\n\nLabels already in use (choose a different word): %s", strings.Join(avoid, ", "))
+	}
+	b.WriteString("\n\nLabel:")
+	return b.String()
+}
+
+func windowList(windows []Window) string {
+	var b strings.Builder
+	for i, w := range windows {
 		app := w.AppID
 		if app == "" {
 			app = "unknown"
 		}
-		fmt.Fprintf(&b, "- app=%s title=%q\n", app, w.Title)
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "- app=%s title=%q", app, w.Title)
 	}
-	if len(avoid) > 0 {
-		fmt.Fprintf(&b, "\nLabels already in use (choose a different word): %s\n", strings.Join(avoid, ", "))
-	}
-	b.WriteString("\nLabel:")
 	return b.String()
 }
 

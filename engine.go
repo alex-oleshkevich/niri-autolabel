@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -87,6 +88,83 @@ func (e *Engine) Run(ctx context.Context) error {
 			e.onResult(ctx, res)
 		}
 	}
+}
+
+// RunOnce labels the current workspaces a single time and returns, leaving the
+// labels in place (no debounce, no clear-on-exit). Used by --once for keybinds.
+func (e *Engine) RunOnce(ctx context.Context) error {
+	wss, err := e.niri.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	wins, err := e.niri.ListWindows(ctx)
+	if err != nil {
+		return err
+	}
+	e.model.Apply(Event{WorkspacesChanged: &struct {
+		Workspaces []Workspace `json:"workspaces"`
+	}{Workspaces: wss}})
+	e.model.Apply(Event{WindowsChanged: &struct {
+		Windows []Window `json:"windows"`
+	}{Windows: wins}})
+
+	type job struct {
+		wsID    int
+		windows []Window
+		sig     string
+		avoid   []string
+		raw     string
+		err     error
+	}
+	var jobs []*job
+
+	for _, id := range e.model.WorkspaceIDs() {
+		ws, ok := e.model.Workspace(id)
+		if !ok || e.foreign(id, ws) {
+			continue
+		}
+		windows := e.model.WindowsIn(id)
+		if len(windows) == 0 {
+			if e.owned(id, ws) {
+				e.unset(ctx, id, ws)
+			}
+			continue
+		}
+		sig := e.model.Signature(id)
+		if e.acted[id] == sig {
+			continue
+		}
+		jobs = append(jobs, &job{wsID: id, windows: windows, sig: sig, avoid: e.labelsInUse(id)})
+	}
+
+	// Generate concurrently (bounded), then apply serially so uniqueness holds.
+	var wg sync.WaitGroup
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j *job) {
+			defer wg.Done()
+			e.sem <- struct{}{}
+			defer func() { <-e.sem }()
+			j.raw, j.err = e.labeler.Generate(ctx, j.windows, j.avoid)
+		}(j)
+	}
+	wg.Wait()
+
+	for _, j := range jobs {
+		if j.err != nil {
+			e.logger.Warn("label generation failed", "ws", j.wsID, "err", j.err)
+			continue
+		}
+		label, ok := sanitize(j.raw)
+		if !ok {
+			e.logger.Warn("model returned unusable label", "ws", j.wsID, "raw", j.raw)
+			continue
+		}
+		if err := e.applyLabel(ctx, j.wsID, label, j.sig); err != nil {
+			e.logger.Warn("apply label failed", "ws", j.wsID, "err", err)
+		}
+	}
+	return nil
 }
 
 func (e *Engine) feedEvents(ctx context.Context, out chan Event) {

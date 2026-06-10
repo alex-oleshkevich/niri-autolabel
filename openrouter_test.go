@@ -21,7 +21,7 @@ func TestOpenRouterGenerate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lab := NewOpenRouterLabeler("secret-key", "test/model", "", NopLogger())
+	lab := NewOpenRouterLabeler("secret-key", "test/model", "", "", NopLogger())
 	lab.client = srv.Client()
 	lab.url = srv.URL
 
@@ -51,6 +51,34 @@ func TestOpenRouterGenerate(t *testing.T) {
 	}
 }
 
+func TestRenderTemplateInjectsWindowsAndAvoid(t *testing.T) {
+	wins := []Window{{AppID: "ghostty", Title: "nvim"}, {AppID: "slack", Title: "general"}}
+
+	got := renderTemplate("Label these:\n{{windows}}\nAvoid: {{avoid}}", wins, []string{"gmail", "code"})
+	if !strings.Contains(got, "app=ghostty") || !strings.Contains(got, "app=slack") {
+		t.Fatalf("windows not injected: %q", got)
+	}
+	if !strings.Contains(got, "Avoid: gmail, code") {
+		t.Fatalf("avoid not injected: %q", got)
+	}
+
+	appended := renderTemplate("Name this workspace.", wins, nil)
+	if !strings.Contains(appended, "app=ghostty") {
+		t.Fatalf("windows not appended when placeholder absent: %q", appended)
+	}
+}
+
+func TestBaseURLBuildsCompletionsEndpoint(t *testing.T) {
+	lab := NewOpenRouterLabeler("k", "m", "http://localhost:11434/v1/", "", NopLogger())
+	if lab.url != "http://localhost:11434/v1/chat/completions" {
+		t.Fatalf("url = %q", lab.url)
+	}
+	def := NewOpenRouterLabeler("k", "m", "", "", NopLogger())
+	if def.url != "https://openrouter.ai/api/v1/chat/completions" {
+		t.Fatalf("default url = %q", def.url)
+	}
+}
+
 func TestOpenRouterErrorBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -58,7 +86,7 @@ func TestOpenRouterErrorBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lab := NewOpenRouterLabeler("k", "bad/model", "", NopLogger())
+	lab := NewOpenRouterLabeler("k", "bad/model", "", "", NopLogger())
 	lab.client = srv.Client()
 	lab.url = srv.URL
 

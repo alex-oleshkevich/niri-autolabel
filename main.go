@@ -21,11 +21,13 @@ func main() {
 	verbose := flag.Bool("verbose", false, "shorthand for -log-level debug")
 	logLevel := flag.String("log-level", "info", "log level (debug|info|warn|error)")
 	logFormat := flag.String("log-format", "text", "log format (text|json)")
-	model := flag.String("model", envOr("OPENROUTER_MODEL", defaultModel), "OpenRouter model (overrides $OPENROUTER_MODEL)")
+	model := flag.String("model", envOr("OPENROUTER_MODEL", defaultModel), "model (overrides $OPENROUTER_MODEL)")
+	baseURL := flag.String("base-url", envOr("OPENROUTER_BASE_URL", defaultBaseURL), "OpenAI-compatible API base URL (e.g. a local Ollama; overrides $OPENROUTER_BASE_URL)")
 	debounce := flag.Duration("debounce", 5*time.Second, "settle time after a workspace change before labelling")
 	maxWait := flag.Duration("max-wait", 30*time.Second, "force a relabel within this long even if a window keeps changing")
 	workers := flag.Int("workers", 2, "max concurrent label requests")
-	promptFile := flag.String("prompt", "", "file with a custom system prompt that replaces the built-in one")
+	once := flag.Bool("once", false, "label the current workspaces once and exit (no daemon, keeps labels)")
+	promptFile := flag.String("prompt", "", "file with a custom prompt template ({{windows}} and {{avoid}} placeholders)")
 	flag.Parse()
 
 	if *showVersion {
@@ -42,37 +44,47 @@ func main() {
 	}
 	logger := NewLogger(level, *logFormat, os.Stderr)
 
-	release, err := acquireSingleInstance()
-	if err != nil {
-		logger.Error("cannot start", "err", err)
-		os.Exit(1)
-	}
-	defer release()
-
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
 	if apiKey == "" && !*dryRun {
 		logger.Error("OPENROUTER_API_KEY is not set")
 		os.Exit(1)
 	}
 
-	var systemPrompt string
+	var template string
 	if *promptFile != "" {
 		data, err := os.ReadFile(*promptFile)
 		if err != nil {
 			logger.Error("cannot read prompt file", "path", *promptFile, "err", err)
 			os.Exit(1)
 		}
-		systemPrompt = string(data)
+		template = string(data)
 	}
 
 	logger.Info("starting",
-		"model", *model, "debounce", *debounce, "max_wait", *maxWait,
-		"workers", *workers, "dry_run", *dryRun, "custom_prompt", *promptFile != "")
+		"model", *model, "base_url", *baseURL, "debounce", *debounce, "max_wait", *maxWait,
+		"workers", *workers, "dry_run", *dryRun, "custom_prompt", *promptFile != "", "once", *once)
 
 	niri := NewNiriClient(*dryRun, os.Stdout, logger)
-	labeler := NewOpenRouterLabeler(apiKey, *model, systemPrompt, logger)
+	labeler := NewOpenRouterLabeler(apiKey, *model, *baseURL, template, logger)
 	state := NewState()
 	engine := NewEngine(niri, labeler, state, logger, *debounce, *maxWait, *workers)
+
+	// One-shot mode: label the current state and exit, leaving labels in place.
+	// No single-instance lock (it may run alongside the daemon) and no clear-on-exit.
+	if *once {
+		if err := engine.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			logger.Error("fatal", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	release, err := acquireSingleInstance()
+	if err != nil {
+		logger.Error("cannot start", "err", err)
+		os.Exit(1)
+	}
+	defer release()
 
 	if err := engine.Run(ctx); err != nil && ctx.Err() == nil {
 		logger.Error("fatal", "err", err)
