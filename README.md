@@ -1,4 +1,4 @@
-# autolabel
+# niri-autolabel
 
 A background daemon that keeps [niri](https://github.com/YaLTeR/niri) workspace
 names in sync with their contents. When a workspace's windows change, autolabel

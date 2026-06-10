@@ -155,7 +155,7 @@ func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid
 	}
 	req.Header.Set("Authorization", "Bearer "+l.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Title", "autolabel")
+	req.Header.Set("X-Title", "niri-autolabel")
 
 	resp, err := l.client.Do(req)
 	if err != nil {

@@ -1,6 +1,6 @@
 [Unit]
 Description=autolabel — niri workspace content labeler
-Documentation=https://github.com/alex-oleshkevich/autolabel
+Documentation=https://github.com/alex-oleshkevich/niri-autolabel
 # niri exposes itself to the user session as graphical-session.target.
 After=graphical-session.target
 PartOf=graphical-session.target
