@@ -10,7 +10,7 @@ depends=('niri')
 makedepends=('go')
 _upstream=niri-autolabel
 source=("$_upstream-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('86475ec10a013905af9f3ac91a519f50f61fa065e1803219ad7c11f2f68f8950')
 
 build() {
   cd "$_upstream-$pkgver"

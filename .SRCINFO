@@ -8,6 +8,6 @@ pkgbase = niri-autolabel
 	makedepends = go
 	depends = niri
 	source = niri-autolabel-0.1.2.tar.gz::https://github.com/alex-oleshkevich/niri-autolabel/archive/refs/tags/v0.1.2.tar.gz
-	sha256sums = SKIP
+	sha256sums = 86475ec10a013905af9f3ac91a519f50f61fa065e1803219ad7c11f2f68f8950
 
 pkgname = niri-autolabel
