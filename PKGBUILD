@@ -1,6 +1,6 @@
 # Maintainer: Alex Oleshkevich <alex.oleshkevich@gmail.com>
 pkgname=autolabel
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Labels niri workspaces from their window contents via OpenRouter"
 arch=('x86_64')
