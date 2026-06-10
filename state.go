@@ -2,7 +2,7 @@ package main
 
 import "sync"
 
-// wsState records what autolabel set for a workspace this session: the label,
+// wsState records what niri-autolabel set for a workspace this session: the label,
 // and the content signature that produced it. Label drives ownership (we only
 // touch names we set); Signature drives the cache (skip the model when
 // unchanged). Ownership is intentionally session-scoped and never persisted:

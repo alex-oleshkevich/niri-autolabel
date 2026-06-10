@@ -7,11 +7,11 @@ import (
 	"syscall"
 )
 
-// errAlreadyRunning is returned when another autolabel instance holds the lock.
-var errAlreadyRunning = errors.New("another autolabel instance is already running")
+// errAlreadyRunning is returned when another niri-autolabel instance holds the lock.
+var errAlreadyRunning = errors.New("another niri-autolabel instance is already running")
 
 // acquireSingleInstance takes an exclusive, non-blocking advisory lock (flock)
-// so only one autolabel runs at a time. The lock is held for the process
+// so only one niri-autolabel runs at a time. The lock is held for the process
 // lifetime via the open file descriptor and released automatically by the
 // kernel on exit, including crashes — so a dead instance never blocks a restart.
 func acquireSingleInstance() (release func(), err error) {
@@ -41,5 +41,5 @@ func lockPath() string {
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	return filepath.Join(dir, "autolabel.lock")
+	return filepath.Join(dir, "niri-autolabel.lock")
 }

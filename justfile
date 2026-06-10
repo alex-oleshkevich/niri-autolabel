@@ -8,7 +8,7 @@ default:
 
 # build the binary
 build:
-    go build -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o autolabel .
+    go build -ldflags "-s -w -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" -o niri-autolabel .
 
 # run the test suite
 test:
@@ -21,7 +21,7 @@ check: test
 
 # install to ~/.local/bin
 install: build
-    install -Dm755 autolabel ~/.local/bin/autolabel
+    install -Dm755 niri-autolabel ~/.local/bin/niri-autolabel
 
 # create and push a release tag (triggers the AUR GitHub workflow)
 tag version:

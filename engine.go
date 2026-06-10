@@ -414,7 +414,7 @@ func (e *Engine) unset(ctx context.Context, wsID int, ws Workspace) {
 	e.logger.Info("cleared label (workspace empty)", "ws", wsID, "label", *ws.Name)
 }
 
-// clearOwnedLabels removes every label autolabel set this session, restoring
+// clearOwnedLabels removes every label niri-autolabel set this session, restoring
 // the workspace names to the pre-startup snapshot. The incoming context is
 // already cancelled on shutdown, so a fresh one is used for the niri calls.
 func (e *Engine) clearOwnedLabels() {

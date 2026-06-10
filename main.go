@@ -31,7 +31,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("autolabel", version)
+		fmt.Println("niri-autolabel", version)
 		return
 	}
 

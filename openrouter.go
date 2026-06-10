@@ -130,7 +130,7 @@ func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid
 	messages := l.messages(windows, avoid)
 	if l.logger.Enabled(ctx, slog.LevelDebug) {
 		var b strings.Builder
-		fmt.Fprintf(&b, "\n======== autolabel prompt -> %s ========\n", l.model)
+		fmt.Fprintf(&b, "\n======== niri-autolabel prompt -> %s ========\n", l.model)
 		for _, m := range messages {
 			fmt.Fprintf(&b, "--- %s ---\n%s\n\n", m.Role, m.Content)
 		}

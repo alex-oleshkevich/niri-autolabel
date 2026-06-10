@@ -1,7 +1,7 @@
 # niri-autolabel
 
 A background daemon that keeps [niri](https://github.com/YaLTeR/niri) workspace
-names in sync with their contents. When a workspace's windows change, autolabel
+names in sync with their contents. When a workspace's windows change, niri-autolabel
 asks an LLM (via [OpenRouter](https://openrouter.ai)) for a single word that
 captures what the windows have in common, and sets it as the workspace name.
 Empty workspaces have their label removed.
@@ -12,7 +12,7 @@ Empty workspaces have their label removed.
 - On a debounced change, sends the workspace's apps + window titles to OpenRouter
   and asks for one word naming the **common theme** of the windows.
 - Sets the result with `niri msg action set-workspace-name` (or unsets it when empty).
-- Labels are kept globally unique and only names autolabel created are ever changed —
+- Labels are kept globally unique and only names niri-autolabel created are ever changed —
   names present at startup are left untouched and our labels are cleared on exit.
 
 ## Requirements
@@ -31,17 +31,17 @@ paru -S niri-autolabel   # or yay -S niri-autolabel
 ### From source
 
 ```sh
-go build -o autolabel .
-install -Dm755 autolabel ~/.local/bin/autolabel
+go build -o niri-autolabel .
+install -Dm755 niri-autolabel ~/.local/bin/niri-autolabel
 ```
 
 ## Usage
 
 ```sh
 export OPENROUTER_API_KEY=sk-or-...
-autolabel                       # run
-autolabel --debug               # print the full prompt sent to the LLM + responses
-autolabel --dry-run             # print niri actions instead of applying them
+niri-autolabel                       # run
+niri-autolabel --debug               # print the full prompt sent to the LLM + responses
+niri-autolabel --dry-run             # print niri actions instead of applying them
 ```
 
 Key flags:
@@ -57,17 +57,17 @@ Key flags:
 
 ## Run as a systemd user service
 
-The package installs `/usr/lib/systemd/user/autolabel.service`.
+The package installs `/usr/lib/systemd/user/niri-autolabel.service`.
 
 ```sh
 # provide the API key
-mkdir -p ~/.config/autolabel
-printf 'OPENROUTER_API_KEY=sk-or-...\n' > ~/.config/autolabel/env
+mkdir -p ~/.config/niri-autolabel
+printf 'OPENROUTER_API_KEY=sk-or-...\n' > ~/.config/niri-autolabel/env
 
-systemctl --user enable --now autolabel
+systemctl --user enable --now niri-autolabel
 ```
 
-The service starts with `graphical-session.target`. For autolabel to reach niri,
+The service starts with `graphical-session.target`. For niri-autolabel to reach niri,
 the session's `NIRI_SOCKET` (and `WAYLAND_DISPLAY`) must be visible to the user
 manager. With uwsm-managed niri this happens automatically; otherwise import it
 from your niri config, e.g.:
@@ -76,7 +76,7 @@ from your niri config, e.g.:
 spawn-at-startup "systemctl" "--user" "import-environment" "WAYLAND_DISPLAY" "NIRI_SOCKET"
 ```
 
-Stopping the service (SIGTERM) makes autolabel remove the labels it set.
+Stopping the service (SIGTERM) makes niri-autolabel remove the labels it set.
 
 ## License
 

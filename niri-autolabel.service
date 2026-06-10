@@ -1,5 +1,5 @@
 [Unit]
-Description=autolabel — niri workspace content labeler
+Description=niri-autolabel — niri workspace content labeler
 Documentation=https://github.com/alex-oleshkevich/niri-autolabel
 # niri exposes itself to the user session as graphical-session.target.
 After=graphical-session.target
@@ -9,12 +9,12 @@ Requisite=graphical-session.target
 [Service]
 Type=simple
 # OPENROUTER_API_KEY is required. Provide it via a drop-in
-# (`systemctl --user edit autolabel`) or this optional env file:
-EnvironmentFile=-%h/.config/autolabel/env
-ExecStart=/usr/bin/autolabel
+# (`systemctl --user edit niri-autolabel`) or this optional env file:
+EnvironmentFile=-%h/.config/niri-autolabel/env
+ExecStart=/usr/bin/niri-autolabel
 Restart=on-failure
 RestartSec=2
-# SIGINT/SIGTERM make autolabel clear the labels it set before exiting.
+# SIGINT/SIGTERM make niri-autolabel clear the labels it set before exiting.
 KillSignal=SIGTERM
 TimeoutStopSec=10
 
