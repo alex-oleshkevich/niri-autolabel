@@ -75,7 +75,20 @@ Label: chats`
 // labels already used by other workspaces, so the model can stay distinct. The
 // engine sanitizes and falls back, so Generate returns the model's raw reply.
 type Labeler interface {
-	Generate(ctx context.Context, windows []Window, avoid []string) (string, error)
+	Generate(ctx context.Context, windows []Window, avoid []string) (LabelResult, error)
+}
+
+type LabelResult struct {
+	Text  string
+	Usage LabelUsage
+}
+
+type LabelUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	Cost             float64
+	HasCost          bool
 }
 
 type OpenRouterLabeler struct {
@@ -121,12 +134,20 @@ type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
+	Usage *chatUsage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid []string) (string, error) {
+type chatUsage struct {
+	PromptTokens     int      `json:"prompt_tokens"`
+	CompletionTokens int      `json:"completion_tokens"`
+	TotalTokens      int      `json:"total_tokens"`
+	Cost             *float64 `json:"cost"`
+}
+
+func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid []string) (LabelResult, error) {
 	messages := l.messages(windows, avoid)
 	if l.logger.Enabled(ctx, slog.LevelDebug) {
 		var b strings.Builder
@@ -145,13 +166,13 @@ func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid
 		Messages:    messages,
 	})
 	if err != nil {
-		return "", err
+		return LabelResult{}, err
 	}
 	start := time.Now()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.url, bytes.NewReader(payload))
 	if err != nil {
-		return "", err
+		return LabelResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+l.apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -159,31 +180,53 @@ func (l OpenRouterLabeler) Generate(ctx context.Context, windows []Window, avoid
 
 	resp, err := l.client.Do(req)
 	if err != nil {
-		return "", err
+		return LabelResult{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return LabelResult{}, err
 	}
 
 	var parsed chatResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("decode response: %w (%s)", err, truncate(string(body), 200))
+		return LabelResult{}, fmt.Errorf("decode response: %w (%s)", err, truncate(string(body), 200))
 	}
 	if parsed.Error != nil {
-		return "", fmt.Errorf("openrouter: %s", parsed.Error.Message)
+		return LabelResult{}, fmt.Errorf("openrouter: %s", parsed.Error.Message)
 	}
 	if resp.StatusCode != http.StatusOK || len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("openrouter: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return LabelResult{}, fmt.Errorf("openrouter: status %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 	content := parsed.Choices[0].Message.Content
+	usage := labelUsage(parsed.Usage)
 	l.logger.Debug("label generated",
 		"model", l.model, "windows", len(windows),
 		"latency_ms", time.Since(start).Milliseconds(),
+		"prompt_tokens", usage.PromptTokens,
+		"completion_tokens", usage.CompletionTokens,
+		"total_tokens", usage.TotalTokens,
+		"cost_credits", usage.Cost,
+		"cost_reported", usage.HasCost,
 		"raw", strings.TrimSpace(content))
-	return content, nil
+	return LabelResult{Text: content, Usage: usage}, nil
+}
+
+func labelUsage(usage *chatUsage) LabelUsage {
+	if usage == nil {
+		return LabelUsage{}
+	}
+	out := LabelUsage{
+		PromptTokens:     usage.PromptTokens,
+		CompletionTokens: usage.CompletionTokens,
+		TotalTokens:      usage.TotalTokens,
+	}
+	if usage.Cost != nil {
+		out.Cost = *usage.Cost
+		out.HasCost = true
+	}
+	return out
 }
 
 // messages builds the chat messages. With a custom template it is sent as a

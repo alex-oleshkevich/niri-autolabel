@@ -17,7 +17,7 @@ func TestOpenRouterGenerate(t *testing.T) {
 		gotAuth = r.Header.Get("Authorization")
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &gotReq)
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"coding\n"}}]}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"coding\n"}}],"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13,"cost":0.0000042}}`)
 	}))
 	defer srv.Close()
 
@@ -31,8 +31,14 @@ func TestOpenRouterGenerate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if strings.TrimSpace(out) != "coding" {
-		t.Fatalf("content = %q, want coding", out)
+	if strings.TrimSpace(out.Text) != "coding" {
+		t.Fatalf("content = %q, want coding", out.Text)
+	}
+	if out.Usage.PromptTokens != 11 || out.Usage.CompletionTokens != 2 || out.Usage.TotalTokens != 13 {
+		t.Fatalf("usage = %+v, want token counts 11/2/13", out.Usage)
+	}
+	if !out.Usage.HasCost || out.Usage.Cost != 0.0000042 {
+		t.Fatalf("cost = %+v, want reported 0.0000042", out.Usage)
 	}
 	if gotAuth != "Bearer secret-key" {
 		t.Fatalf("auth header = %q", gotAuth)

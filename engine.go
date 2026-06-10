@@ -14,6 +14,8 @@ type Engine struct {
 	logger   Logger
 	debounce time.Duration
 	maxWait  time.Duration
+	// maxCostSession is an OpenRouter credits budget. Zero means unlimited.
+	maxCostSession float64
 
 	model    *Model
 	timers   map[int]*time.Timer
@@ -30,16 +32,26 @@ type Engine struct {
 	fireCh   chan int
 	resultCh chan jobResult
 	sem      chan struct{}
+	cost     CostTotals
 }
 
 type jobResult struct {
 	wsID      int
 	signature string
-	raw       string
+	result    LabelResult
 	err       error
 }
 
-func NewEngine(niri Niri, labeler Labeler, state *State, logger Logger, debounce, maxWait time.Duration, workers int) *Engine {
+type CostTotals struct {
+	Requests         int
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
+	TotalCost        float64
+	ReportedCosts    int
+}
+
+func NewEngine(niri Niri, labeler Labeler, state *State, logger Logger, debounce, maxWait time.Duration, workers int, maxCostSession float64) *Engine {
 	if workers < 1 {
 		workers = 1
 	}
@@ -47,21 +59,22 @@ func NewEngine(niri Niri, labeler Labeler, state *State, logger Logger, debounce
 		maxWait = debounce
 	}
 	return &Engine{
-		niri:         niri,
-		labeler:      labeler,
-		state:        state,
-		logger:       logger,
-		debounce:     debounce,
-		maxWait:      maxWait,
-		model:        NewModel(),
-		timers:       map[int]*time.Timer{},
-		inflight:     map[int]bool{},
-		acted:        map[int]string{},
-		armed:        map[int]string{},
-		pendingSince: map[int]time.Time{},
-		fireCh:       make(chan int, 64),
-		resultCh:     make(chan jobResult, 64),
-		sem:          make(chan struct{}, workers),
+		niri:           niri,
+		labeler:        labeler,
+		state:          state,
+		logger:         logger,
+		debounce:       debounce,
+		maxWait:        maxWait,
+		maxCostSession: maxCostSession,
+		model:          NewModel(),
+		timers:         map[int]*time.Timer{},
+		inflight:       map[int]bool{},
+		acted:          map[int]string{},
+		armed:          map[int]string{},
+		pendingSince:   map[int]time.Time{},
+		fireCh:         make(chan int, 64),
+		resultCh:       make(chan jobResult, 64),
+		sem:            make(chan struct{}, workers),
 	}
 }
 
@@ -76,6 +89,7 @@ func (e *Engine) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			e.clearOwnedLabels()
+			e.logCostSummary()
 			return nil
 		case ev := <-events:
 			if e.model.Apply(ev) {
@@ -113,7 +127,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 		windows []Window
 		sig     string
 		avoid   []string
-		raw     string
+		result  LabelResult
 		err     error
 	}
 	var jobs []*job
@@ -134,6 +148,13 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 		if e.acted[id] == sig {
 			continue
 		}
+		if e.costBudgetExceeded() {
+			e.logger.Warn("openrouter session cost budget reached; skipping label request",
+				"ws", id,
+				"max_cost_credits", e.maxCostSession,
+				"session_cost_credits", e.cost.TotalCost)
+			continue
+		}
 		jobs = append(jobs, &job{wsID: id, windows: windows, sig: sig, avoid: e.labelsInUse(id)})
 	}
 
@@ -145,7 +166,7 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 			defer wg.Done()
 			e.sem <- struct{}{}
 			defer func() { <-e.sem }()
-			j.raw, j.err = e.labeler.Generate(ctx, j.windows, j.avoid)
+			j.result, j.err = e.labeler.Generate(ctx, j.windows, j.avoid)
 		}(j)
 	}
 	wg.Wait()
@@ -155,15 +176,17 @@ func (e *Engine) RunOnce(ctx context.Context) error {
 			e.logger.Warn("label generation failed", "ws", j.wsID, "err", j.err)
 			continue
 		}
-		label, ok := sanitize(j.raw)
+		e.recordCost(j.result.Usage)
+		label, ok := sanitize(j.result.Text)
 		if !ok {
-			e.logger.Warn("model returned unusable label", "ws", j.wsID, "raw", j.raw)
+			e.logger.Warn("model returned unusable label", "ws", j.wsID, "raw", j.result.Text)
 			continue
 		}
 		if err := e.applyLabel(ctx, j.wsID, label, j.sig); err != nil {
 			e.logger.Warn("apply label failed", "ws", j.wsID, "err", err)
 		}
 	}
+	e.logCostSummary()
 	return nil
 }
 
@@ -293,6 +316,13 @@ func (e *Engine) onFire(ctx context.Context, wsID int) {
 	if e.acted[wsID] == sig {
 		return
 	}
+	if e.costBudgetExceeded() {
+		e.logger.Warn("openrouter session cost budget reached; skipping label request",
+			"ws", wsID,
+			"max_cost_credits", e.maxCostSession,
+			"session_cost_credits", e.cost.TotalCost)
+		return
+	}
 
 	avoid := e.labelsInUse(wsID)
 	e.logger.Debug("requesting label", "ws", wsID, "windows", len(windows), "avoid", avoid)
@@ -300,9 +330,9 @@ func (e *Engine) onFire(ctx context.Context, wsID int) {
 	go func() {
 		e.sem <- struct{}{}
 		defer func() { <-e.sem }()
-		raw, err := e.labeler.Generate(ctx, windows, avoid)
+		result, err := e.labeler.Generate(ctx, windows, avoid)
 		select {
-		case e.resultCh <- jobResult{wsID: wsID, signature: sig, raw: raw, err: err}:
+		case e.resultCh <- jobResult{wsID: wsID, signature: sig, result: result, err: err}:
 		case <-ctx.Done():
 		}
 	}()
@@ -315,10 +345,11 @@ func (e *Engine) onResult(ctx context.Context, res jobResult) {
 		e.logger.Warn("label generation failed; keeping old label", "ws", res.wsID, "err", res.err)
 		return // sanitize-then-keep: leave the old label, retry on next change
 	}
+	e.recordCost(res.result.Usage)
 
-	label, ok := sanitize(res.raw)
+	label, ok := sanitize(res.result.Text)
 	if !ok {
-		e.logger.Warn("model returned unusable label; keeping old", "ws", res.wsID, "raw", res.raw)
+		e.logger.Warn("model returned unusable label; keeping old", "ws", res.wsID, "raw", res.result.Text)
 		return
 	}
 
@@ -331,6 +362,44 @@ func (e *Engine) onResult(ctx context.Context, res jobResult) {
 	if e.model.Signature(res.wsID) != res.signature {
 		e.evaluate(res.wsID)
 	}
+}
+
+func (e *Engine) recordCost(usage LabelUsage) {
+	e.cost.Requests++
+	e.cost.PromptTokens += usage.PromptTokens
+	e.cost.CompletionTokens += usage.CompletionTokens
+	e.cost.TotalTokens += usage.TotalTokens
+	if usage.HasCost {
+		e.cost.TotalCost += usage.Cost
+		e.cost.ReportedCosts++
+	}
+	e.logger.Info("openrouter usage",
+		"request", e.cost.Requests,
+		"prompt_tokens", usage.PromptTokens,
+		"completion_tokens", usage.CompletionTokens,
+		"total_tokens", usage.TotalTokens,
+		"cost_credits", usage.Cost,
+		"cost_reported", usage.HasCost,
+		"session_total_tokens", e.cost.TotalTokens,
+		"session_cost_credits", e.cost.TotalCost)
+}
+
+func (e *Engine) logCostSummary() {
+	if e.cost.Requests == 0 {
+		return
+	}
+	e.logger.Info("openrouter session usage",
+		"requests", e.cost.Requests,
+		"prompt_tokens", e.cost.PromptTokens,
+		"completion_tokens", e.cost.CompletionTokens,
+		"total_tokens", e.cost.TotalTokens,
+		"cost_credits", e.cost.TotalCost,
+		"reported_costs", e.cost.ReportedCosts,
+		"max_cost_credits", e.maxCostSession)
+}
+
+func (e *Engine) costBudgetExceeded() bool {
+	return e.maxCostSession > 0 && e.cost.TotalCost >= e.maxCostSession
 }
 
 func (e *Engine) applyLabel(ctx context.Context, wsID int, label, sig string) error {

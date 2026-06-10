@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -26,6 +27,7 @@ func main() {
 	debounce := flag.Duration("debounce", 5*time.Second, "settle time after a workspace change before labelling")
 	maxWait := flag.Duration("max-wait", 30*time.Second, "force a relabel within this long even if a window keeps changing")
 	workers := flag.Int("workers", 2, "max concurrent label requests")
+	maxCostSession := flag.Float64("max-cost-session", envFloat("OPENROUTER_MAX_COST_SESSION", 0), "max OpenRouter credits to spend per session; 0 disables the limit")
 	once := flag.Bool("once", false, "label the current workspaces once and exit (no daemon, keeps labels)")
 	promptFile := flag.String("prompt", "", "file with a custom prompt template ({{windows}} and {{avoid}} placeholders)")
 	flag.Parse()
@@ -62,12 +64,13 @@ func main() {
 
 	logger.Info("starting",
 		"model", *model, "base_url", *baseURL, "debounce", *debounce, "max_wait", *maxWait,
-		"workers", *workers, "dry_run", *dryRun, "custom_prompt", *promptFile != "", "once", *once)
+		"workers", *workers, "dry_run", *dryRun, "custom_prompt", *promptFile != "", "once", *once,
+		"max_cost_session", *maxCostSession)
 
 	niri := NewNiriClient(*dryRun, os.Stdout, logger)
 	labeler := NewOpenRouterLabeler(apiKey, *model, *baseURL, template, logger)
 	state := NewState()
-	engine := NewEngine(niri, labeler, state, logger, *debounce, *maxWait, *workers)
+	engine := NewEngine(niri, labeler, state, logger, *debounce, *maxWait, *workers, *maxCostSession)
 
 	// One-shot mode: label the current state and exit, leaving labels in place.
 	// No single-instance lock (it may run alongside the daemon) and no clear-on-exit.
@@ -98,4 +101,16 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envFloat(key string, fallback float64) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

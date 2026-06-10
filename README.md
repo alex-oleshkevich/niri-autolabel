@@ -42,6 +42,7 @@ export OPENROUTER_API_KEY=sk-or-...
 niri-autolabel                       # run
 niri-autolabel --debug               # print the full prompt sent to the LLM + responses
 niri-autolabel --dry-run             # print niri actions instead of applying them
+niri-autolabel --max-cost-session 0.01  # stop requesting labels after 0.01 OpenRouter credits
 ```
 
 Key flags:
@@ -52,8 +53,15 @@ Key flags:
 | `--debounce` | `5s` | settle time after a change before labelling |
 | `--max-wait` | `30s` | relabel within this long even if a window keeps changing |
 | `--workers` | `2` | max concurrent label requests |
+| `--max-cost-session` | `0` | max OpenRouter credits to spend per run; `0` disables the limit (also `$OPENROUTER_MAX_COST_SESSION`) |
 | `--prompt` | – | file with a custom system prompt that replaces the built-in one |
 | `--log-level` | `info` | `debug` \| `info` \| `warn` \| `error` (`--debug`/`--verbose` = debug) |
+
+Cost reporting:
+
+- Each successful OpenRouter request logs prompt tokens, completion tokens, total tokens, reported cost, and running session cost.
+- On shutdown or after `--once`, niri-autolabel logs a session usage summary.
+- Keep `--model` on a low-cost model and use `--max-cost-session` to stop new requests after tracked session cost reaches your limit.
 
 ## Run as a systemd user service
 

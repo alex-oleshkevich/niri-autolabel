@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"testing"
 	"time"
@@ -37,14 +38,15 @@ func (m *mockNiri) UnsetName(_ context.Context, ref string) error {
 
 type mockLabeler struct {
 	out      string
+	usage    LabelUsage
 	called   int
 	gotAvoid []string
 }
 
-func (l *mockLabeler) Generate(_ context.Context, _ []Window, avoid []string) (string, error) {
+func (l *mockLabeler) Generate(_ context.Context, _ []Window, avoid []string) (LabelResult, error) {
 	l.called++
 	l.gotAvoid = avoid
-	return l.out, nil
+	return LabelResult{Text: l.out, Usage: l.usage}, nil
 }
 
 func workspacesEvent(wss ...Workspace) Event {
@@ -60,7 +62,7 @@ func windowsEvent(wins ...Window) Event {
 }
 
 func newTestEngine(niri Niri, lab Labeler) *Engine {
-	return NewEngine(niri, lab, NewState(), NopLogger(), time.Millisecond, time.Second, 1)
+	return NewEngine(niri, lab, NewState(), NopLogger(), time.Millisecond, time.Second, 1, 0)
 }
 
 func TestApplyLabelUnnamedUsesIdxAndVerifies(t *testing.T) {
@@ -221,5 +223,38 @@ func TestOwnedWorkspaceRelabelsByName(t *testing.T) {
 	}
 	if len(niri.setCalls) != 1 || niri.setCalls[0] != [2]string{"old", "newlabel"} {
 		t.Fatalf("expected relabel by name ref 'old', got %v", niri.setCalls)
+	}
+}
+
+func TestCostBudgetSkipsNewLabelRequests(t *testing.T) {
+	niri := &mockNiri{}
+	lab := &mockLabeler{out: "code"}
+	e := newTestEngine(niri, lab)
+	e.maxCostSession = 0.01
+	e.cost.TotalCost = 0.01
+	e.model.Apply(workspacesEvent(Workspace{ID: 1, Idx: 1}))
+	e.model.Apply(windowsEvent(Window{ID: 9, AppID: "ghostty", Title: "x", WorkspaceID: ptr(1)}))
+
+	e.onFire(context.Background(), 1)
+
+	if lab.called != 0 {
+		t.Fatalf("labeler called despite exhausted cost budget: %d", lab.called)
+	}
+	if e.inflight[1] {
+		t.Fatal("workspace should not be marked inflight when budget is exhausted")
+	}
+}
+
+func TestCostUsageAccumulatesFromResults(t *testing.T) {
+	e := newTestEngine(&mockNiri{}, &mockLabeler{})
+
+	e.recordCost(LabelUsage{PromptTokens: 10, CompletionTokens: 2, TotalTokens: 12, Cost: 0.000003, HasCost: true})
+	e.recordCost(LabelUsage{PromptTokens: 5, CompletionTokens: 1, TotalTokens: 6, Cost: 0.000002, HasCost: true})
+
+	if e.cost.Requests != 2 || e.cost.PromptTokens != 15 || e.cost.CompletionTokens != 3 || e.cost.TotalTokens != 18 {
+		t.Fatalf("cost totals = %+v", e.cost)
+	}
+	if math.Abs(e.cost.TotalCost-0.000005) > 0.000000001 {
+		t.Fatalf("total cost = %.8f, want 0.000005", e.cost.TotalCost)
 	}
 }
